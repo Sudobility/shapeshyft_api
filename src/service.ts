@@ -20,6 +20,7 @@ import { createLlmKeyCredentialResolver } from "./credentials/llm-key-resolver";
 import { endpointBinding } from "./schemas/endpoint-binding";
 import { createKeysRouter } from "./routes/keys";
 import providerSyncRouter from "./routes/provider-sync";
+import { createImageProvider } from "./image-provider";
 
 const isTestMode =
   env.get("NODE_ENV") === "test" || env.get("BUN_ENV") === "test";
@@ -50,6 +51,7 @@ export const service = createShapeshyftService({
   }),
   getPeerAddress: readPeerAddress,
   endpointBinding,
+  createProvider: createImageProvider,
   revenueCatApiKey: env.get("REVENUECAT_API_KEY"),
 });
 
