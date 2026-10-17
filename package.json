@@ -1,6 +1,6 @@
 {
   "name": "shapeshyft_api",
-  "version": "1.0.144",
+  "version": "1.0.145",
   "module": "src/index.ts",
   "type": "module",
   "private": true,
