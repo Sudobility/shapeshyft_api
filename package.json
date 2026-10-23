@@ -1,6 +1,6 @@
 {
   "name": "shapeshyft_api",
-  "version": "1.0.147",
+  "version": "1.0.148",
   "module": "src/index.ts",
   "type": "module",
   "private": true,
@@ -61,6 +61,6 @@
   },
   "repository": {
     "type": "git",
-    "url": "https://github.com/johnqh/shapeshyft_api.git"
+    "url": "https://github.com/Sudobility/shapeshyft_api.git"
   }
 }
