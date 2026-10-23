@@ -13,7 +13,7 @@
         "@sudobility/ratelimit_service": "^1.0.45",
         "@sudobility/shapeshyft_engine": "^1.0.12",
         "@sudobility/shapeshyft_service": "^1.0.12",
-        "@sudobility/shapeshyft_types": "^1.1.13",
+        "@sudobility/shapeshyft_types": "^1.1.14",
         "@sudobility/subscription_service": "^1.0.29",
         "@sudobility/types": "^1.9.74",
         "drizzle-orm": "^0.45.0",
@@ -317,7 +317,7 @@
 
     "@sudobility/shapeshyft_service": ["@sudobility/shapeshyft_service@1.0.12", "https://npm.pkg.github.com/download/@sudobility/shapeshyft_service/1.0.12/9049960bbff3642bc81486da6a697b5ee5d7cb47", { "dependencies": { "@hono/zod-validator": "^0.7.5", "@sudobility/shapeshyft_engine": "^1.0.12", "resend": "^6.9.2", "zod": "^3.24.0" }, "peerDependencies": { "@sudobility/auth_service": "^1.1.25", "@sudobility/entity_service": "^1.0.45", "@sudobility/ratelimit_service": "^1.0.43", "@sudobility/subscription_service": "^1.0.27", "@sudobility/types": "^1.9.72", "drizzle-orm": "^0.45.0", "firebase-admin": "^13.6.0", "hono": "^4.10.7", "postgres": "^3.4.7" } }, "sha512-E1jVEgG0S5gi6i+QCsilR5MVu09FKz+AsbLoHrg9BTOscPJwyHNrLqV0Rt8A5rMV6G17L1nZUVI4Qo3OKIG8cQ=="],
 
-    "@sudobility/shapeshyft_types": ["@sudobility/shapeshyft_types@1.1.13", "https://npm.pkg.github.com/download/@sudobility/shapeshyft_types/1.1.13/63ebd5d0870b0cb850ff2205f177b4810a6457d7", { "dependencies": { "@sudobility/shapeshyft_engine": "^1.0.12" }, "peerDependencies": { "@sudobility/types": "^1.9.74" } }, "sha512-WIT+6jE40qEq8cvyDXc1WXodxEWkcX9pzR8p/+ZrZSY7kV6RH+2PHSkBrXzMWyW94KnbiVu1jaLJfM6Nl+ZneQ=="],
+    "@sudobility/shapeshyft_types": ["@sudobility/shapeshyft_types@1.1.14", "https://npm.pkg.github.com/download/@sudobility/shapeshyft_types/1.1.14/8fdd30a630decdbd5308a71cdc98147de468d677", { "peerDependencies": { "@sudobility/shapeshyft_engine": "^1.0.12", "@sudobility/types": "^1.9.74" } }, "sha512-jIt7dhkxeFvM+ou8MhfejHUfAMMv6aw3aiTYerl9EE89o5nAGoyq3yuKCyzZv1r/CKGpZ+6DWBRHzKb4FPGnvQ=="],
 
     "@sudobility/subscription_service": ["@sudobility/subscription_service@1.0.29", "https://npm.pkg.github.com/download/@sudobility/subscription_service/1.0.29/79b807478f5985cb1373d6050b8f23539a1d9eef", {}, "sha512-bOMl36uSWHibIYYangoqUjIHl/SWO3JOt2ZvKncGHkrcdl3SeRxuw+EV7O+cAt51HWExBS1AmZAw1GxSnXMZBw=="],
 
