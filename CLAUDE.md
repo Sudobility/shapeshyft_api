@@ -1,751 +1,142 @@
 # ShapeShyft API
 
-> **Git policy — never auto-commit or auto-push.** Leave your work in the working tree.
-> Run `git commit`, `git push`, `gh pr create`, or `scripts/push_all.sh` **only when the user
-> explicitly asks in that turn**. Approval for an earlier change does not carry forward, and
-> finishing a task is not permission to commit it.
+Backend API server for ShapeShyft, an LLM structured-output platform. It exposes
+public AI-invocation routes (`/api/v1/ai/*`), a provider catalog, and admin CRUD
+for entities, projects, endpoints, keys, and analytics. See `README.md` for the
+route catalog and curl examples.
 
-Backend API server for ShapeShyft - an LLM structured output platform (v1.0.123).
+> **Git policy — never auto-commit or auto-push.** Leave work in the working tree.
+> Run `git commit`, `git push`, `gh pr create`, or `scripts/push_all.sh` **only when
+> the user explicitly asks in that turn**. Approval for an earlier change does not
+> carry forward. Stay on the current branch — do not create feature branches.
 
-## Tech Stack
+## Tech stack
 
-- **Language**: TypeScript (strict mode)
-- **Runtime**: Bun
-- **Package Manager**: Bun (do not use npm/yarn/pnpm for installing dependencies)
-- **Framework**: Hono v4.10
-- **Database**: PostgreSQL with Drizzle ORM v0.45
-- **Auth**: Firebase Admin SDK (via `@sudobility/auth_service`)
-- **LLM Providers**: OpenAI, Anthropic, Google Gemini, Groq, Mistral, Cohere, xAI, DeepSeek, Perplexity, LM Studio
-- **Validation**: Zod
-- **Encryption**: AES-256-CBC for API keys and storage credentials
-- **Image Processing**: Sharp (SVG/TIFF/HEIC/BMP/AVIF to PNG)
-- **Email**: Resend (invitation emails, sent by `@sudobility/shapeshyft_service`)
-- **Testing**: Vitest v4.0
+- **Runtime**: Bun (not Node). **Package manager**: Bun only — never npm/yarn/pnpm.
+- **Language**: TypeScript strict, ESM, `noEmit` (tsc is typecheck-only).
+- **Framework**: Hono v4.11. **DB**: PostgreSQL + Drizzle ORM v0.45 (`postgres` driver).
+- **Auth**: Firebase Admin (via `@sudobility/auth_service`). **Validation**: Zod.
+- **Testing**: Vitest v4. **License**: BUSL-1.1.
 
-## Shared packages
+## Architecture: this repo is a thin product shell
 
-Most of this API lives in `@sudobility/shapeshyft_service` (routes, middleware,
-shared tables and DDL) and `@sudobility/shapeshyft_engine` (LLM adapters,
-prompts, media, provider catalog, domain types). ShapeRouter runs on the same
-packages. The route, middleware, and LLM sections below describe code that now
-lives there.
+Almost all behavior — the HTTP server, middleware, health checks, auth, shared
+DB tables/DDL, all admin + public routes, and every LLM adapter/prompt/provider
+catalog — lives in two external packages:
 
-What stays here is what makes it ShapeShyft:
+- `@sudobility/shapeshyft_service` — server (`createApiServer`), routes, middleware,
+  auth (`createFirebaseAuth`), lazy DB (`createLazyDatabase`), shared tables/DDL
+  (`initServiceTables`), invitation email.
+- `@sudobility/shapeshyft_engine` — LLM adapters, prompts, media, provider catalog,
+  domain types (`createLLMProvider`).
 
-- `src/service.ts` -- key prefixes (`shyft_`, `shyftent`), service wiring, and
-  ShapeShyft-only routes via `mountShapeshyftRoutes`.
-- `src/credentials/llm-key-resolver.ts` -- provider credentials come from the
-  entity's `llm_api_keys` row bound by `endpoints.llm_key_id`.
-- `src/db/llm-api-keys.ts` -- that table's DDL, its FK from `endpoints`, and the
-  `endpoints.provider` backfill.
-- `src/routes/keys.ts`, `src/routes/provider-sync.ts`, `src/lib/provider-url.ts`.
+**New backend logic almost always belongs in those libraries, not here.** A fix to an
+adapter, prompt, or shared route goes in the library, then both this API and ShapeRouter
+bump the dependency. Release order lives in `shapeshyft_app/scripts/push_all.sh`.
 
-Everything else here is configuration handed to the service: the server
-(`createApiServer` -- middleware, health checks, Bun idle timeout), the lazy
-database (`createLazyDatabase`), env reading (`createEnvReader`), Firebase auth
-(`createFirebaseAuth`) and the invitation email (`createInvitationEmailSender`)
-all come from `@sudobility/shapeshyft_service`. New backend logic belongs there
-unless it is provider API key management.
-
-A fix to an adapter, prompt, or shared route goes in the library, then both APIs
-bump. Release order is in `shapeshyft_app/scripts/push_all.sh`.
-
-## Project Structure
+What is genuinely local (ShapeShyft-only) — the only code to edit here:
 
 ```
 src/
-├── index.ts                # Entry point: createApiServer(...) with this product's name, routes, db
-├── service.ts              # createShapeshyftService(...) wiring + ShapeShyft-only routes
-├── credentials/
-│   └── llm-key-resolver.ts # ProviderCredentialResolver backed by llm_api_keys
+├── index.ts                   # Entry: createApiServer(name, routes, db, initDatabase, port ?? 3000)
+├── service.ts                 # createShapeshyftService(...) wiring + mountShapeshyftRoutes
+├── image-provider.ts          # Wraps createLLMProvider to add Gemini/OpenAI image output
+├── credentials/llm-key-resolver.ts  # Provider creds from entity's llm_api_keys row
 ├── db/
-│   ├── index.ts            # createLazyDatabase(...), initDatabase() (service tables + llm_api_keys)
-│   ├── init.ts             # `bun run db:init` -- runs initDatabase() standalone, then exits
-│   ├── schema.ts           # Service tables re-exported under historical names + llm_api_keys
-│   ├── llm-api-keys.ts     # llm_api_keys DDL, endpoints FK, provider backfill
-│   └── migrate.ts          # One-off data migration script (user_id -> entity_id)
+│   ├── index.ts               # createLazyDatabase + initDatabase() (service tables + llm_api_keys)
+│   ├── init.ts                # `bun run db:init` — runs initDatabase() then exits
+│   ├── schema.ts              # Service tables re-exported + llm_api_keys
+│   ├── llm-api-keys.ts        # llm_api_keys DDL, endpoints FK, provider backfill
+│   └── migrate.ts             # One-off data migration (user_id -> entity_id)
 ├── routes/
-│   ├── keys.ts             # LLM provider API key CRUD (encrypted), createKeysRouter(ctx)
-│   └── provider-sync.ts    # Point self-hosted providers at the caller's IP
-├── schemas/
-│   ├── keys.ts             # Zod schemas for LLM key routes
-│   └── endpoint-binding.ts # llm_key_id validation on endpoint create/update
-└── lib/
-    ├── encryption.ts       # ENCRYPTION_KEY-backed instance of the service's encryption
-    ├── env-helper.ts       # This process's createEnvReader(...) (.env.local wins)
-    ├── peer-address.ts     # TCP peer via getConnInfo (hono/bun)
-    └── provider-url.ts     # Provider URL host rewriting; re-exports client-IP helpers
-tests/
-├── *.db.test.ts            # Database suites (vitest.db.config.ts, localhost only)
-├── setup.ts / setup.db.ts  # Unit setup scrubs DATABASE_URL; DB setup requires localhost
-├── stubs/hono-bun.ts       # hono/bun stand-in for Vitest
-├── unit/
-│   ├── encryption.test.ts
-│   ├── provider-sync-plan.test.ts
-│   └── provider-url.test.ts
-└── utils/
-    ├── index.ts            # Test utility exports
-    ├── mock-auth.ts        # Mock Firebase auth for testing
-    ├── test-app.ts         # service.buildRoutes() with mocked auth
-    └── test-db.ts          # Test database helpers
-scripts/
-├── fix-personal-entity-roles.ts # One-off migration script
-└── setup-test-db.sh        # Test database setup script
+│   ├── keys.ts                # LLM provider API key CRUD (encrypted) — createKeysRouter(ctx)
+│   └── provider-sync.ts       # Point self-hosted (lm_studio) providers at caller's IP
+├── schemas/{keys,endpoint-binding}.ts
+└── lib/{encryption,env-helper,peer-address,provider-url}.ts
+tests/   *.db.test.ts = DB suites; tests/unit/*.test.ts = unit; stubs/hono-bun.ts
 ```
 
 ## Commands
 
 ```bash
-bun run dev          # Start dev server with hot reload (--watch)
-bun run start        # Start production server
-bun run build        # Build for production (bun build)
-bun run start:prod   # Run production build
-bun run test         # Unit tests, Vitest. Never touches a database; this is what CI runs.
-bun run test:watch   # Watch mode for unit tests
-bun run test:db      # Database tests (*.db.test.ts), Vitest. MANUAL -- never run in CI.
-                     # Requires TEST_DATABASE_URL pointing at localhost; refuses any other host.
-bun run test:db:setup  # Create the local shapeshyft_test database
-bun run lint         # Run ESLint
-bun run typecheck    # TypeScript type check
-bun run format       # Format with Prettier
-bun run db:init      # Create/migrate schema, tables, indexes, then exit (idempotent)
-bun run verify       # Pre-commit: typecheck + lint + unit tests
+bun install          # Bun only
+bun run dev          # Dev server, hot reload (--watch). Default port 3000.
+bun run start        # Run src/index.ts directly (no build)
+bun run build        # Bundle to dist/ (production/Docker only)
+bun run start:prod   # Run dist/index.js
+bun run typecheck    # tsc --noEmit
+bun run lint         # eslint src
+bun run format       # prettier --write src
+bun run test:unit    # Unit tests (Vitest). THIS is what CI runs. No `test` script exists.
+bun run test:watch   # Unit tests, watch mode
+bun run test:db      # DB suites (*.db.test.ts), MANUAL. Needs TEST_DATABASE_URL on localhost.
+bun run test:db:setup  # Create local shapeshyft_test database
+bun run db:init      # Apply schema/tables/indexes then exit (idempotent)
+bun run verify       # Pre-commit gate: typecheck + lint + test:unit
 ```
+
+## Testing gotchas (important)
+
+- **One runner: Vitest. NEVER run `bun test`.** `bun test` is Bun's own runner: it
+  ignores both vitest configs and the localhost guard, collects the `*.db.test.ts`
+  suites, and runs them against `DATABASE_URL` from `.env` — a **remote** database it
+  will migrate and mutate. There is no `test` npm script, so `bun run test` errors;
+  use `bun run test:unit`. `bun run verify` uses `test:unit` for this reason.
+- Two configs: `vitest.config.ts` (unit) **excludes** `**/*.db.test.ts`, so CI never
+  touches a DB; `vitest.db.config.ts` collects **only** those files, no parallelism.
+- DB suffix is the only marker: a test is a DB test iff its file ends `.db.test.ts`
+  (directory irrelevant).
+- `tests/setup.ts` deletes `DATABASE_URL` so a prod URL in your shell can't leak into
+  unit tests. `tests/setup.db.ts` requires `TEST_DATABASE_URL` to be exactly `localhost`
+  (refuses `127.0.0.1`) before assigning it to `DATABASE_URL`.
+- `hono/bun` only resolves under Bun; both vitest configs alias it to
+  `tests/stubs/hono-bun.ts` (reads the peer from the server object). Don't hardcode an
+  address there — suites supply their own fixtures.
+- `@sudobility/*` service packages are compiled by tsc with extensionless/directory
+  relative imports that Node's ESM resolver rejects, so both configs `server.deps.inline`
+  them to route through Vite.
 
 ## Database
 
-Uses PostgreSQL with a `shapeshyft` schema (not the default `public` schema).
-
-### Tables
-
-| Table | Purpose | Key |
-|-------|---------|-----|
-| `users` | Firebase UID mapping | `firebase_uid` (PK) |
-| `user_settings` | Organization settings | `firebase_uid` (FK, unique) |
-| `user_api_keys` | Personal API keys (`shyft_...`) | `firebase_uid` (FK), unique `key_hash` |
-| `entities` | Organizations/teams | `id` (UUID PK) |
-| `entity_members` | Entity membership roles | `entity_id` + `user_id` |
-| `entity_invitations` | Pending team invitations | `entity_id` + `email` |
-| `entity_api_keys` | Entity API keys (`shyftent_...`), hash-only | `entity_id` (FK) |
-| `entity_storage_configs` | User cloud storage (GCS/S3) | `entity_id` (unique) |
-| `llm_api_keys` | Encrypted LLM provider keys | `entity_id` (FK) |
-| `projects` | User projects with API keys | `entity_id` (FK), unique `(entity_id, project_name)` |
-| `endpoints` | AI endpoint configurations | `project_id` (FK), unique `(project_id, endpoint_name)` |
-| `usage_analytics` | Request tracking per endpoint | `endpoint_id` (FK) |
-| `rate_limit_counters` | Rate limit tracking | Per-entity counters |
-
-### Connection Pattern
-
-Database uses a **lazy Proxy-based initialization** (`src/db/index.ts`). The connection is not created at module load time -- it is initialized on first access via a Proxy getter. This avoids requiring `DATABASE_URL` at import time (important for tests and scripts).
-
-## Environment Variables
-
-Required in `.env.local`:
-
-```bash
-# Database
-DATABASE_URL=postgresql://user:pass@localhost:5432/shapeshyft
-
-# Firebase Admin
-FIREBASE_PROJECT_ID=your-project-id
-FIREBASE_CLIENT_EMAIL=firebase-adminsdk@...
-FIREBASE_PRIVATE_KEY="-----BEGIN PRIVATE KEY-----\n..."
-SITEADMIN_EMAILS=admin@example.com  # Optional: comma-separated
-
-# Encryption
-ENCRYPTION_KEY=64-character-hex-string  # Must be exactly 64 hex chars (32 bytes)
-
-# RevenueCat (rate limiting)
-REVENUECAT_API_KEY=sk_...
-
-# Email (optional)
-RESEND_API_KEY=re_...
-RESEND_SENDER_EMAIL=noreply@shapeshyft.ai
-RESEND_SENDER_NAME=ShapeShyft
-APP_URL=https://shapeshyft.ai
-
-# Server
-PORT=3000  # Default: 3000
-```
-
-## API Routes
-
-Health routes sit at the root, outside `/api/v1` and outside auth:
-
-| Method | Path | Purpose |
-|--------|------|---------|
-| GET | `/` | Name/version banner |
-| GET | `/health` | Liveness |
-| GET | `/health/ready` | Readiness -- runs `SELECT 1` against Postgres, 503 on failure |
-
-Everything else is under `/api/v1/`.
-
-### Public Routes (no Firebase auth)
-
-| Method | Path | Purpose |
-|--------|------|---------|
-| GET/POST | `/ai/:entitySlug/:projectName/:endpointName` | Execute AI endpoint (project API key auth) |
-| GET/POST | `/ai/:entitySlug/:projectName/:endpointName/prompt` | Render the prompt without calling the LLM; with `llm_provider`, also the exact provider request (`request`) |
-| GET | `/providers` | List all LLM providers |
-| GET | `/providers/:provider` | One provider's config |
-| GET | `/providers/:provider/models` | Models for a provider, with capabilities and pricing |
-
-There is **no** `/invoke` suffix -- the endpoint name is the last path segment. The
-`/prompt` routes are registered *before* the bare ones, so `prompt` is not captured
-as an endpoint name. On `GET` the input is the query string; on `POST` it is the JSON
-body. The request method must match the endpoint's stored `http_method` or the call
-is rejected with 405. Provider routes set `Cache-Control: public, max-age=3600`.
-
-### Admin Routes (Firebase token, personal API key, or entity API key)
-
-| Method | Path | Purpose |
-|--------|------|---------|
-| GET/POST | `/entities` | List user's entities / create entity |
-| GET/PUT/DELETE | `/entities/:entitySlug` | Entity CRUD |
-| GET | `/entities/:entitySlug/members` | List members |
-| PUT/DELETE | `/entities/:entitySlug/members/:memberId` | Change role / remove member |
-| GET/POST | `/entities/:entitySlug/invitations` | List / send invitation |
-| PUT/DELETE | `/entities/:entitySlug/invitations/:invitationId` | Renew / cancel invitation |
-| GET/POST | `/entities/:entitySlug/keys` | LLM provider keys |
-| GET/PUT/DELETE | `/entities/:entitySlug/keys/:keyId` | Provider key CRUD |
-| GET/POST | `/entities/:entitySlug/api-keys` | Entity API keys (`shyftent_...`) |
-| PUT/DELETE | `/entities/:entitySlug/api-keys/:keyId` | Entity API key CRUD |
-| GET/POST/PUT/DELETE | `/entities/:entitySlug/storage` | Storage config (single row per entity) |
-| GET/POST | `/entities/:entitySlug/projects` | Projects |
-| GET/PUT/DELETE | `/entities/:entitySlug/projects/:projectId` | Project CRUD |
-| GET | `/entities/:entitySlug/projects/:projectId/api-key` | Reveal the project key |
-| POST | `/entities/:entitySlug/projects/:projectId/api-key/refresh` | Rotate the project key |
-| GET/POST | `/entities/:entitySlug/projects/:projectId/endpoints` | Endpoints |
-| GET/PUT/DELETE | `/entities/:entitySlug/projects/:projectId/endpoints/:endpointId` | Endpoint CRUD |
-| GET | `/entities/:entitySlug/analytics` | Usage analytics |
-| GET | `/entities/self/providers/client-ip` | What the API sees about the caller's address (**entity API key only**, read-only) |
-| POST | `/entities/self/providers/sync-ip` | Point the entity's `lm_studio` providers at the caller's IP (**entity API key only**) |
-| GET | `/ratelimits/:entitySlug` | Tier config + current usage |
-| GET | `/ratelimits/:entitySlug/history/:periodType` | Usage history (`hour` \| `day` \| `month`) |
-| GET/PUT | `/users/:userId/settings` | User settings |
-| GET/POST | `/users/:userId/api-keys` | List / create personal API keys |
-| GET/PUT/DELETE | `/users/:userId/api-keys/:keyId` | Personal API key CRUD |
-| GET | `/users/:userId/api-keys/:keyId/reveal` | Reveal the full key (Firebase token only) |
-| GET | `/users/me` | Authenticated caller (Firebase token or personal key; entity keys are barred from `/users/*`) |
-| GET | `/users/:userId` | User info with siteAdmin status |
-| GET | `/users/:userId/subscriptions` | RevenueCat subscription status |
-| GET | `/invitations` | List the caller's pending invitations (matched by email) |
-| POST | `/invitations/:token/accept` | Accept invitation |
-| POST | `/invitations/:token/decline` | Decline invitation |
-
-The rate limit router is mounted at `/ratelimits/:rateLimitUserId`, but in ShapeShyft
-that path segment is the **entity slug**. There is no `PUT` -- limits come from the
-entity's RevenueCat entitlements, not from a stored config.
-
-## Architecture
-
-### Route Registration Order
-
-In `src/routes/index.ts`, public routes are registered **before** admin routes. Admin routes apply `firebaseAuthMiddleware` on a wildcard (`*`). Registration order matters -- public routes must come first to avoid auth interception.
-
-### Auth Split
-
-- **Public routes** (`/ai/*`, `/providers/*`): no middleware. The AI routes do their
-  own auth against a *project* API key (`sk_live_...`), read from
-  `Authorization: Bearer` or the `?api_key=` query parameter, plus an optional
-  per-endpoint IPv4 allowlist.
-- **Admin routes** (everything else): `firebaseAuthMiddleware` accepts **three**
-  credentials, checked in this order:
-
-  1. **Personal API key** (`shyft_...`) from `X-API-Key` or `Authorization: Bearer`.
-     Resolved by SHA-256 hash to its owner, then `userId` / `userEmail` / `siteAdmin`
-     are set exactly as a token would set them -- every downstream handler is identical.
-  2. **Entity API key** (`shyftent_...`) from the same headers. Authenticates as the
-     *entity itself*, not as a person: `userEmail` is null, `siteAdmin` is false, and
-     `userId` carries only the key's author so audit columns keep a value. Restricted
-     to paths containing `/entities/` (403 otherwise), so it can never reach `/users/*`
-     and read or mint credentials belonging to whoever created it.
-  3. **Firebase ID token** from `Authorization: Bearer`. Anonymous users are rejected
-     with 403, and the `users` row is upserted fire-and-forget.
-
-  `authMethod` (`"firebase"` | `"api_key"` | `"entity_api_key"`) records which was used.
-  `firebaseUser` is **only** set on the token path, so handlers must read
-  `userId` / `userEmail`, never `firebaseUser`.
-
-### Actors and Permissions
-
-`getEntityWithPermission()` in `src/lib/entity-helpers.ts` takes an `EntityActor`,
-not a bare user id. Route handlers should pass `getActor(c)`:
-
-- A **user** actor (Firebase token or personal key) is authorised by their membership
-  role, via `entityHelpers.permissions`.
-- An **entity_api_key** actor has no membership row, so it is authorised by matching
-  the entity it was issued for, with `MANAGER_PERMISSIONS`. It may manage projects,
-  endpoints, provider keys, and storage -- never members, roles, or API keys.
-
-### LLM Provider Architecture
-
-Uses a factory pattern (`createLLMProvider`) over 5 provider classes:
-- `OpenAIProvider` -- OpenAI itself, plus Mistral, xAI, DeepSeek, and Perplexity, each
-  given its own base URL from `OPENAI_COMPATIBLE_BASE_URLS` so requests do not fall
-  through to `api.openai.com`. Cohere is served here too, through its Compatibility API.
-- `AnthropicProvider` -- uses tool_use for structured output
-- `GeminiProvider` -- uses native `responseSchema` for structured JSON
-- `GroqProvider` -- dedicated Whisper transcription + extraction pipeline
-- `CustomLLMProvider` -- for LM Studio / custom OpenAI-compatible endpoints with multi-format response parsing
-
-### Structured Output Strategies
-
-Each provider uses its native structured output mechanism:
-- OpenAI/Groq/compatible: Function calling -- `tools` plus a forced
-  `tool_choice` on a function named `structured_response`
-- Cohere: `response_format: { type: "json_object", schema }` -- its Compatibility API
-  takes no `tool_choice` (engine `cohere-schema.ts`)
-- Anthropic: Tool use (`tools` + `tool_choice`)
-- Gemini: Response schema (`responseMimeType: "application/json"` + `responseSchema`)
-- Custom/LM Studio: System prompt instructions with JSON extraction
-
-When `web_search` is on, the OpenAI provider switches to the Responses API: a first
-call decides whether live data is actually needed, then the answer is produced with
-`web_search_preview` available and the same forced `structured_response` call.
-
-### Rate Limiting
-
-- 4 tiers, hourly / daily / monthly (`src/middleware/rateLimit.ts`):
-
-  | Entitlement | Display | Hourly | Daily | Monthly |
-  |-------------|---------|--------|-------|---------|
-  | `none` | Free | 10 | 120 | 1,800 |
-  | `bandwidth_dev` | Developer | 100 | 1,200 | 18,000 |
-  | `bandwidth_pro` | Pro | 800 | 10,000 | 150,000 |
-  | `bandwidth_ultra` | Ultra | unlimited | unlimited | unlimited |
-
-- Tied to RevenueCat entitlements, keyed by **entity id** as the subscriber id
-- Per-entity (not per-user), via `@sudobility/ratelimit_service`
-- Lazily initialized to avoid requiring `REVENUECAT_API_KEY` at module load
-- Entities whose active **owner** is a site admin skip rate limiting entirely
-- The check **fails open**: if RevenueCat is unconfigured or the lookup throws, the
-  error is logged and the request proceeds
-
-### Multimodal Pipeline
-
-1. Input data scanned for media (data URLs, `gs://` URLs)
-2. Media extracted and replaced with placeholders in text
-3. Unsupported image formats converted to PNG via Sharp
-4. Model capabilities validated against requested media types
-5. Provider-specific content blocks built (base64, URL, inlineData, etc.)
-6. Generated media returned as base64 or uploaded to user storage (GCS/S3)
-
-### Reserved Input Fields
-
-These input keys are consumed by ShapeShyft rather than passed to the model. They
-are stripped in one pass by `extractReservedFields` (`src/lib/reserved-fields.ts`)
-**before** any prompt is built, so none of them can leak into the prompt text:
-
-| Field | Effect |
-|-------|--------|
-| `context` | Overrides the endpoint's stored context for this call. Only a non-empty string counts. |
-| `web_search` | Can only *disable* search on an endpoint that already has it enabled -- never enable it. |
-| `max_output_tokens` | Lowers the endpoint's output ceiling for this call. Clamped to the endpoint's own value, so it can never raise it. |
-| `llm_provider` | Call-time provider override (any `LlmProvider` id; anything else is a 400). Invoke runs on the entity's ACTIVE `llm_api_keys` row for that provider (most recently updated if several), or fails 400 `No active <provider> API key for this organization`. Absent: the endpoint's bound key, as before. |
-| `llm_model` | Model for the override; omitted, the provider catalog's `defaultModel`. Ignored without `llm_provider`. |
-
-Adding another is a small breaking-change surface for callers already using that
-key as real input, so weigh it before doing so.
-
-### `/prompt` with `llm_provider`
-
-`/prompt` always returns `{ prompt }`. Given `llm_provider` it also returns
-`request`, an `AiProviderRequest` -- `{ provider, model, method: "POST", url,
-headers, auth: { header, prefix }, body }` -- describing the call invoke would
-make: the same system/user prompts (`buildLegacyPrompts`), the same body builder
-the adapters send with (`buildProviderRequest` from
-`@sudobility/shapeshyft_engine/core`). No stored key is needed or looked up; the
-caller adds its own key as `auth.header: auth.prefix + key`. OpenAI-compatible
-providers get `{ header: "Authorization", prefix: "Bearer " }`, Anthropic
-`{ header: "x-api-key", prefix: "" }` plus `anthropic-version`. Not described:
-web search (several Responses API calls) and Gemini, Jev, LM Studio, Whisper
-(400). The reply is read with `parseProviderResponse` from the same subpath.
-
-### Runaway Protection
-
-`endpoints.max_output_tokens` caps how many tokens one invocation may generate.
-Without it a looping model streams until the *provider* severs the connection --
-measured at ~13 minutes and 343KB for a request whose honest answer was ~2,000
-tokens. A stall timeout cannot catch this (a looping model streams
-continuously), and rate limiting counts requests per entity, so one runaway is
-invisible to it.
-
-- **`null` means no protection**, and every endpoint predating the column stays
-  null: the migration adds no default and backfills nothing.
-- **New endpoints get `DEFAULT_MAX_OUTPUT_TOKENS` (8000)** from
-  `endpointCreateSchema`, not from the database, so every creation path is
-  protected while existing rows are untouched. An explicit `null` on create opts
-  out; an omitted field on update leaves the current value alone.
-- The resolved ceiling reaches every provider as `LLMRequest.maxTokens`.
-  Anthropic keeps its `?? 4096` fallback, so unprotected Anthropic endpoints
-  behave exactly as before.
-
-`resolveMaxOutputTokens` (`src/lib/output-limit.ts`) owns the clamping --
-`min(per-call, endpoint)`, so a caller can only ask for less -- and rejects a
-malformed value with 400 rather than silently leaving them unprotected. It
-accepts a numeric *string*, since a GET invocation's input comes from the query
-string.
-
-### Provider IP Sync
-
-`POST /entities/self/providers/sync-ip` rewrites the host of every `lm_studio`
-provider the entity owns to the address the request arrived from -- dynamic DNS
-without the DNS, for a model server on a home connection. `GET
-/entities/self/providers/client-ip` reports what the API sees, changing nothing.
-
-- **Entity API key only.** The entity comes from the key; the caller sends no
-  body and needs to know neither its slug nor its own address.
-- **Only the host is replaced.** Scheme, credentials, port, path, query, and
-  fragment survive byte for byte -- `rewriteUrlHost` splices the string rather
-  than round-tripping `URL.toString()`, which would drop a default port and
-  append a slash to an empty path. A hostname host is skipped: DNS already
-  follows a moving IP.
-- `planProviderSync` decides everything before anything is written; the route
-  applies the plan in **one transaction**, so a mid-loop failure cannot leave
-  some providers moved and some not.
-- Providers land in `updated` / `unchanged` / `skipped`. The operation is
-  idempotent.
-
-Routes are mounted at `/entities/self/providers`, registered **before**
-`/entities` so `self` is not taken for a slug. The `/entities/` prefix is what
-lets an entity key reach them.
-
-#### Resolving the caller's address
-
-`resolveCallerIp` decides how far to trust the request from the TCP peer
-(`getConnInfo()`, `hono/bun`; an IPv4 peer arrives IPv6-mapped and is unwrapped):
-
-- **Public peer** -- the client reached us directly. Use it, ignore all headers.
-- **Private/loopback peer** -- the request came through our own proxy, so read
-  headers in this order: **`CF-Connecting-IP` / `True-Client-IP`**, then
-  `X-Forwarded-For` right-to-left taking the first public entry, then `X-Real-Ip`.
-
-Only a public address is ever returned, so the route needs no routability check
-of its own.
-
-**Measure the chain before trusting a header in a new deployment** -- use
-`client-ip`. Production is Cloudflare -> Traefik -> API, and because Traefik has
-no `forwardedHeaders.trustedIPs` it discards Cloudflare's `X-Forwarded-For` and
-substitutes the edge address:
-
-| source | value |
-|---|---|
-| peer | `172.18.0.2` (Traefik) |
-| `x-forwarded-for` / `x-real-ip` | `104.22.14.180` (Cloudflare edge, rotates) |
-| `cf-connecting-ip` | `142.254.88.197` (the actual client) |
-
-The edge address is *public*, so it passes every routability check and looks
-like a valid client. It was written into a live provider URL once before
-`CF-Connecting-IP` was preferred. Only headers on `FORWARDING_HEADERS` are ever
-echoed back -- never widen that to all headers, since the request carries the
-caller's `X-API-Key`.
-
-### Finish Reason
-
-Responses carry `usage.finish_reason` and, when the ceiling was hit,
-`truncated: true`. Providers disagree on both the name (`finish_reason`,
-`stop_reason`, `finishReason`) and the vocabulary, so
-`normalizeFinishReason` (`src/services/llm/finish-reason.ts`) maps them onto one
-union. This is what lets a caller tell *"the model ran away"* from *"the model
-returned something unparseable"* -- a truncated answer usually fails schema
-validation, and without the reason it gets diagnosed as the wrong fault.
-
-## Code Patterns
-
-### Route Handler Pattern
-
-All route files export a Hono instance. Handlers use `zValidator` for input validation and context variables set by `firebaseAuthMiddleware`:
-
-```typescript
-import { Hono } from "hono";
-import { zValidator } from "@hono/zod-validator";
-import { entitySlugParamSchema, myCreateSchema } from "../schemas";
-import { getActor, getEntityWithPermission } from "../lib/entity-helpers";
-
-const app = new Hono();
-
-app.get("/:entitySlug/things",
-  zValidator("param", entitySlugParamSchema),
-  async (c) => {
-    const { entitySlug } = c.req.valid("param");
-
-    // getActor(c), not c.get("userId") -- an entity API key has no membership
-    const result = await getEntityWithPermission(entitySlug, getActor(c));
-    if (result.error) return c.json(errorResponse(result.error), 403);
-
-    const rows = await db.select().from(things).where(eq(things.entity_id, result.entity.id));
-    return c.json(successResponse(rows));
-  }
-);
-
-app.post("/:entitySlug/things",
-  zValidator("param", entitySlugParamSchema),
-  zValidator("json", myCreateSchema),
-  async (c) => {
-    const { entitySlug } = c.req.valid("param");
-    const body = c.req.valid("json");
-
-    const result = await getEntityWithPermission(entitySlug, getActor(c), true); // true = requireEdit
-    if (result.error) return c.json(errorResponse(result.error), 403);
-
-    try {
-      const [row] = await db.insert(things).values({ ...body, entity_id: result.entity.id }).returning();
-      return c.json(successResponse(row), 201);
-    } catch (error: any) {
-      console.error("Error creating thing:", error);
-      return c.json(errorResponse(error.message || "Internal server error"), 500);
-    }
-  }
-);
-
-export default app;
-```
-
-### Response Format
-
-Always use helpers from `@sudobility/shapeshyft_types`:
-
-```typescript
-import { successResponse, errorResponse } from "@sudobility/shapeshyft_types";
-
-return c.json(successResponse(data));           // { success: true, data, timestamp }
-return c.json(errorResponse("Not found"), 404); // { success: false, error, timestamp }
-```
-
-### Permission Check Pattern
-
-```typescript
-import { getActor, getEntityWithPermission } from "../lib/entity-helpers";
-
-// Read-only access
-const result = await getEntityWithPermission(entitySlug, getActor(c));
-
-// Write access (shorthand for the "canCreateProjects" permission)
-const result = await getEntityWithPermission(entitySlug, getActor(c), true);
-
-// A specific permission
-const result = await getEntityWithPermission(entitySlug, getActor(c), "canManageApiKeys");
-
-if (result.error) {
-  return c.json(errorResponse(result.error), getPermissionErrorStatus(result.errorCode));
-}
-const entity = result.entity;
-```
-
-### Encryption Pattern
-
-```typescript
-import { encryptApiKey, decryptApiKey } from "../lib/encryption";
-
-// Encrypt (returns { encrypted, iv })
-const { encrypted, iv } = encryptApiKey(plaintext);
-
-// Decrypt
-const plaintext = decryptApiKey(encrypted, iv);
-```
-
-## Task Recipes
-
-### Adding a New Admin Route
-
-1. Create Zod schemas in `src/schemas/index.ts`
-2. Create route file in `src/routes/myroute.ts` following the route handler pattern above
-3. Register in `src/routes/index.ts` under `adminRoutes.route("/mypath", myRoute)`, keeping
-   more specific mounts (`/users/:userId/api-keys`) ahead of broader ones (`/users`)
-4. Authorise with `getEntityWithPermission(slug, getActor(c), ...)` so entity-key callers work
-5. Add unit/integration tests in `tests/`
-
-### Adding a New LLM Provider
-
-1. Check if OpenAI-compatible -- if yes, add to `PROVIDER_ENDPOINTS` *and* `OPENAI_COMPATIBLE_BASE_URLS` in `src/services/llm/index.ts` and reuse `OpenAIProvider`. Without the base URL the provider silently calls `api.openai.com`
-2. If not compatible, create `src/services/llm/myprovider.ts` implementing `ILLMProvider`
-3. Add provider config to `src/config/providers.ts` (models, capabilities, pricing)
-4. Register in `createLLMProvider()` factory in `src/services/llm/index.ts`
-5. Add capability validation if provider has unique constraints
-
-### Adding a New Database Table
-
-1. Define table in `src/db/schema.ts` using `shapeshyftSchema.table()` (NOT `pgTable`)
-2. Add the matching `CREATE TABLE IF NOT EXISTS` to `initDatabase()` in `src/db/index.ts` --
-   there is no migration tool, `initDatabase()` *is* the migration
-3. Run `bun run db:init` to apply it (or just restart the server -- it runs on boot too)
-4. Add CRUD routes and Zod schemas
-5. The `shapeshyft` schema prefix is automatic via `shapeshyftSchema`
-
-## Testing
-
-**One runner: Vitest.** Never run `bun test` in this repo. It is Bun's own
-runner: it ignores both vitest configs, collects the `*.db.test.ts` suites, and
-connects them to `DATABASE_URL` from `.env` -- a remote database -- where
-`initDatabase()` applies migrations and the suites create and delete rows.
-`hono/bun` is aliased to `tests/stubs/hono-bun.ts` under Vitest, so no suite
-needs the Bun runtime.
-
-```bash
-bun run test                       # Unit tests, Vitest (excludes *.db.test.ts)
-bun run test:db                    # Database tests, Vitest (*.db.test.ts only, manual)
-bunx vitest run tests/unit/encryption.test.ts  # Single unit test file
-TEST_DATABASE_URL=postgresql://localhost:5432/shapeshyft_test bunx vitest run --config vitest.db.config.ts tests/keys.db.test.ts  # Single database test file
-```
-
-### Unit Test Pattern
-
-```typescript
-import { describe, it, expect, beforeAll } from "vitest";
-
-describe("MyModule", () => {
-  beforeAll(() => {
-    process.env.ENCRYPTION_KEY = "a".repeat(64);
-  });
-
-  it("should do something", () => {
-    const result = myFunction("input");
-    expect(result).toBe("expected");
-  });
-});
-```
-
-### Integration Test Pattern
-
-Integration tests require a running PostgreSQL instance:
-
-```typescript
-import { describe, it, expect, beforeAll } from "vitest";
-import { testApp } from "./utils/test-app";
-import { mockAuth } from "./utils/mock-auth";
-
-describe("Things API", () => {
-  beforeAll(async () => {
-    // test-app.ts sets up a Hono app with mock auth
-  });
-
-  it("should create a thing", async () => {
-    const res = await testApp.request("/api/v1/entities/my-org/things", {
-      method: "POST",
-      headers: { "Content-Type": "application/json", ...mockAuth.headers },
-      body: JSON.stringify({ name: "test" }),
-    });
-    expect(res.status).toBe(201);
-  });
-});
-```
-
-## Key Dependencies
-
-| Package | Version | Purpose |
-|---------|---------|---------|
-| `hono` | ^4.10.7 | HTTP framework |
-| `drizzle-orm` | ^0.45.0 | Type-safe ORM |
-| `postgres` | ^3.4.7 | PostgreSQL driver |
-| `zod` | ^3.24.0 | Schema validation |
-| `firebase-admin` | ^13.6.0 | Firebase auth verification |
-| `openai` | ^4.77.0 | OpenAI API client |
-| `@anthropic-ai/sdk` | ^0.39.0 | Anthropic API client |
-| `@google/generative-ai` | ^0.21.0 | Gemini API client |
-| `groq-sdk` | ^0.37.0 | Groq API client (Whisper) |
-| `sharp` | ^0.34.5 | Image conversion |
-| `@sudobility/shapeshyft_types` | ^1.0.58 | Shared TypeScript types |
-| `@sudobility/entity_service` | ^1.0.41 | Entity/organization management |
-| `@sudobility/ratelimit_service` | ^1.0.39 | Rate limiting |
-| `@sudobility/auth_service` | ^1.1.21 | Firebase auth helpers |
-| `@sudobility/subscription_service` | ^1.0.23 | Subscription management |
-| `@sudobility/types` | ^1.9.67 | Common Sudobility types (entitlements, user info) |
-
-## Workspace Context
-
-This project is part of the **ShapeShyft** multi-project workspace at the parent directory. See `../CLAUDE.md` for the full architecture, dependency graph, and build order.
-
-## Downstream Impact
-
-This is a **leaf application** -- no other project depends on it.
-
-When upstream libraries change, update here:
-
-| Upstream Library | Update command |
-|-----------------|----------------|
-| `@sudobility/auth_service` | `bun update @sudobility/auth_service && bun run typecheck` |
-| `@sudobility/entity_service` | `bun update @sudobility/entity_service && bun run typecheck` |
-| `@sudobility/ratelimit_service` | `bun update @sudobility/ratelimit_service && bun run typecheck` |
-| `@sudobility/subscription_service` | `bun update @sudobility/subscription_service && bun run typecheck` |
-| `@sudobility/shapeshyft_types` | `bun update @sudobility/shapeshyft_types && bun run typecheck` |
-| `@sudobility/types` | `bun update @sudobility/types && bun run typecheck` |
-
-## Local Dev Workflow
-
-To test with local library versions:
-
-```bash
-# In the library (e.g., auth_service):
-cd ../auth_service && bun link
-
-# In this project:
-bun link @sudobility/auth_service
-
-# Run dev server:
-bun run dev
-
-# When done, unlink:
-bun unlink @sudobility/auth_service && bun install
-```
-
-## Pre-Commit Checklist
-
-```bash
-bun run verify  # Runs: typecheck + lint + unit tests
-```
-
-For integration tests (requires test database):
-```bash
-bun run test:db:setup && TEST_DATABASE_URL=postgresql://localhost:5432/shapeshyft_test bun run test:db
-```
-
-## Gotchas
-
-- **No build step needed for dev** -- `bun run dev` runs TypeScript directly. `bun run build` is only for production Docker images.
-- **Database must be running** -- requires PostgreSQL. Check `DATABASE_URL` in `.env.local`.
-- **`initDatabase()` is the migration system** -- there is no migration tool. It creates the schema, enums, tables, and indexes, then applies additive `ALTER TABLE ... IF NOT EXISTS` column migrations, and it runs on **every** server boot as well as via `bun run db:init`. Every statement is idempotent, so it is safe to re-run; it is also why a new column must be added there by hand, not just to `schema.ts`.
-- **`ENCRYPTION_KEY` must be 64-character hex** -- LLM API keys and storage credentials are encrypted at rest. Missing this causes runtime errors.
-- **Tables live in `shapeshyft` PostgreSQL schema** -- not the default `public` schema. All table creation uses `shapeshyftSchema.table()`.
-- **One test runner, two configs.** Everything runs under Vitest. `bun run test` uses `vitest.config.ts`, which *excludes* `**/*.db.test.ts` -- database suites are never collected, so a CI run cannot reach a database. `bun run test:db` uses `vitest.db.config.ts`, which collects only those files and is run by hand.
-- **Database tests are named `*.db.test.ts`.** The suffix is the only marker; the directory is irrelevant.
-- **`TEST_DATABASE_URL`, not `DATABASE_URL`.** `tests/setup.db.ts` validates it points at exactly `localhost` (`127.0.0.1` is refused) and only then assigns `DATABASE_URL`. `tests/setup.ts` deletes `DATABASE_URL` outright, so a production URL exported in your shell can never reach a test.
-- **`hono/bun` is aliased in tests.** `src/routes/provider-sync.ts` imports `getConnInfo` from `hono/bun`, which only resolves under the Bun runtime. `tests/stubs/hono-bun.ts` mirrors the real adapter -- it reads the peer from the server object Hono receives as `env`, which the suites supply themselves -- so routes stay unmodified. Do not make it return a fixed address; that would override each suite's own fixture.
-- **`@sudobility` service packages are inlined** via `server.deps.inline`. They are compiled by `tsc` with extensionless and directory-style relative imports, which Bun resolves and Node's ESM resolver rejects.
-- **Never `bun test`.** It bypasses the vitest configs and the localhost guard and runs the database suites against `DATABASE_URL` from `.env`. `bun run verify` uses `bun run test` (Vitest) for this reason.
-- **Six `@sudobility/*` dependencies** -- version mismatches between them are the most common cause of type errors.
-- **Lazy Proxy-based db connection** -- the database is not connected at module load. First access triggers initialization. This is intentional for test isolation.
-- **Three key types, different jobs** -- `sk_live_...` is a *project* key that authenticates callers of a published AI endpoint; `shyft_...` is a *personal* key that authenticates its owner against the admin routes; `shyftent_...` is an *entity* key that authenticates as the workspace itself for CI, scripts, and MCP clients. The prefix is what routes an incoming credential, so never reuse one.
-- **Entity keys are hash-only** -- the plaintext appears once, in the create response, and is unrecoverable afterwards. A lost entity key is rotated, not revealed. Personal keys also store an AES-256-CBC copy, which is what makes `/reveal` possible.
-- **Entity keys are path-restricted** -- the middleware rejects any request whose path does not contain `/entities/`, and `entity-api-keys.ts` additionally refuses entity-key auth outright, so a key can never mint or revoke keys.
-- **Handlers must not read `firebaseUser`** -- it is undefined on API-key requests. Use `c.get("userId")` and `c.get("userEmail")`.
-- **API keys cannot mint API keys** -- create and reveal require a Firebase token (`authMethod === "api_key"` is rejected with 403), so a leaked key cannot bootstrap more credentials.
-- **User API key lookups are cached for 60s** -- a revoked key can keep working that long unless the revocation went through this API, which invalidates the entry immediately.
-- **Public AI routes use project API key auth** -- NOT Firebase auth, and NOT `X-API-Key`. The key comes from `Authorization: Bearer` or the `?api_key=` query parameter, and is validated by decrypting the stored key and comparing with `timingSafeEqual`.
-- **The invoke path has no `/invoke` suffix** -- it is `POST /api/v1/ai/:entitySlug/:projectName/:endpointName`. The endpoint name is the last segment. `/prompt` is the one reserved suffix, and its routes are registered first so `prompt` is never captured as an endpoint name.
-- **`organizationPath` is the entity slug** -- the first path segment of a public AI URL is looked up against `entities.entity_slug`, despite the parameter name.
-- **Every invocation is counted, success or failure** -- `incrementCallCount()` bumps `endpoints.call_count` and a `usage_analytics` row is written on both paths, since the caller consumed the endpoint either way.
-- **Call cost is estimated per invocation, in the API** -- `estimateResponseCost` (engine, `lib/cost-estimation.ts`) prices the provider's usage report: cached and cache-write input, thinking tokens, audio, long-context tiers, DeepSeek peak hours, search and request fees, and the provider's own billed figure where xAI or Perplexity send one. It is returned as `usage.estimated_cost_cents` at full precision and stored in `usage_analytics.estimated_cost_micro_cents`; the legacy integer `estimated_cost_cents` column rounded nearly every call to 0 and is read only for old rows. A failed call whose adapter attached usage (`getFailedInvocationUsage`) is costed too. The app displays this figure and never computes its own.
-- **Prompt caching: DeepSeek, OpenAI and Gemini cache on their own; Anthropic is asked to.** The first three cache a repeated prompt prefix with no request flag, so all the API does is read the hit count and price it at the cached rate. Anthropic caches nothing unless the request says so, so the adapter marks the system prompt with `cache_control: {type: "ephemeral"}` (5-minute TTL): tools and system prompt are the part that repeats while the user message changes. A write bills at 1.25x input and a read at 0.1x, so a prompt used twice inside the window is already ahead, while a system prompt below the model's minimum (1024 tokens for most, 4096 for Opus 4.5+ and Haiku 4.5) is silently not cached. **What a caller can now see:** `usage.tokens_cached_input` in the response (a part of `tokens_input`, absent when nothing was cached) and `cached_input_tokens` / `cache_write_tokens` in `usage_analytics.request_metadata`; failed calls do not record them. The hit rate for an endpoint is `sum(request_metadata->>'cached_input_tokens') / sum(tokens_input)`. **Caching only pays for a prefix that stays identical**, so a caller that puts per-call content before the stable content defeats it on every provider.
-- **Rate limiting fails open** -- an unconfigured or throwing RevenueCat lookup logs and lets the request through. Site-admin-owned entities skip the check entirely.
-- **IP allowlist on endpoints** -- optional IPv4 allowlist. When set, requests from IPs not in the list are rejected.
-- **Provider factory reuses OpenAIProvider** -- Mistral, xAI, DeepSeek, and Perplexity use `OpenAIProvider` with their own base URLs, since their APIs are OpenAI-compatible.
-- **Cohere uses `response_format`, not a tool call** -- it goes through `OpenAIProvider` at Cohere's Compatibility API (`https://api.cohere.ai/compatibility/v1`), which accepts `tools` but not `tool_choice`, so a call cannot be forced. `cohereResponseFormat` strips the JSON Schema keywords Cohere rejects (`minimum`/`maximum`, `minItems`/`maxItems`, `minLength`/`maxLength`, `allOf`/`oneOf`/`not`, most `format`s, anchored `pattern`s); a schema whose objects lack a `required` field falls back to plain JSON mode, and the system prompt still describes the full schema either way.
-- **Groq Whisper has two-stage pipeline** -- transcription via Whisper, then optional structured extraction via the endpoint's `transcription_extraction_model`. That model runs on the endpoint's own credential, so it must be a Groq model; any other is rejected with 400 rather than handed the Groq key.
-- **Imagen/Veo are stubs** -- Gemini generative models (Imagen, Veo) require Vertex AI SDK which is not yet integrated.
-- **Media conversion only for images** -- SVG, TIFF, HEIC, BMP, AVIF are converted to PNG via Sharp. Audio/video conversion is not supported.
-- **SSRF prevention** -- only `gs://` URLs are allowed for media input. HTTP/HTTPS URLs are rejected to prevent server-side request forgery.
-- **Rate limits are per-entity** -- tied to RevenueCat subscription via entity slug mapping, not per individual user.
-- **`getEntityWithPermission()` is centralized** -- lives in `src/lib/entity-helpers.ts` along with the singleton `entityHelpers` instance. All route files import from there.
-- **Signed URLs expire in 7 days** -- GCS and S3 uploads generate signed URLs with 7-day expiry. Clients must handle expired URLs.
-- **Firebase token verifier uses 5-minute cache** -- reduces Firebase Admin calls but means revoked tokens remain valid for up to 5 minutes.
-- **Route registration order matters** -- public routes must be registered before admin routes in `src/routes/index.ts` to avoid wildcard auth middleware interception.
-- **50MB body limit** -- set in `src/index.ts` via Hono bodyLimit middleware for base64-encoded media uploads.
-- **Entity slug max 12 chars** -- enforced by Zod schema. Important for URL parsing.
-- **Invitations are addressed by token, not id** -- `POST /invitations/:token/accept|decline`. `GET /invitations` matches pending invitations against the caller's `userEmail`. Entity keys cannot reach these routes at all -- `/api/v1/invitations` does not contain `/entities/`, so the middleware returns 403.
-- **Project responses are redacted** -- `publicProject()` in `src/lib/public-project.ts` strips `encrypted_api_key` and `api_key_iv` from any project row before it is returned. `db.select()` returns every column, so new project-returning routes must pass rows through it.
-- **`/users/me` is the only way a personal-key caller learns its own UID** -- and the `/users/:userId/*` routes need that UID. It is registered before `/:userId` so the literal `me` is not captured as a user id. It tolerates a Firebase outage: identity comes from the middleware, and only the display name is fetched from Firebase.
-
-## Git Workflow
-
-- Do not use feature branches for code changes. Always stay on the current branch.
+- PostgreSQL, **`shapeshyft` schema** (not `public`). Shared-table DDL comes from
+  `initServiceTables`; the one local table is `llm_api_keys` (`src/db/llm-api-keys.ts`,
+  encrypted provider keys, FK from `endpoints.llm_key_id`).
+- **`initDatabase()` IS the migration system** — no migration tool. It runs on every
+  server boot and via `bun run db:init`; every statement is idempotent (additive
+  `ALTER TABLE ... IF NOT EXISTS`). A new column must be added there by hand.
+- **Lazy Proxy connection** (`createLazyDatabase`): nothing connects at import; first
+  access initializes. Intentional — lets tests/scripts import without `DATABASE_URL`.
+
+## Environment
+
+Loaded via `src/lib/env-helper.ts` (`.env.local` wins over `.env`). Required:
+`DATABASE_URL`, `ENCRYPTION_KEY` (exactly 64 hex chars = 32 bytes, AES-256),
+`FIREBASE_PROJECT_ID` / `FIREBASE_CLIENT_EMAIL` / `FIREBASE_PRIVATE_KEY`,
+`REVENUECAT_API_KEY` (rate limiting). Optional: `SITEADMIN_EMAILS`, `RESEND_*`,
+`APP_URL`, `PORT` (default 3000; Docker uses 8020), `LM_STUDIO_TIMEOUT_MS`,
+`NODE_ENV`/`BUN_ENV` (`test` disables Firebase). Full list in `.env.example`.
+
+## Key conventions & gotchas
+
+- **Three key types, different jobs** (the prefix routes the credential — never reuse):
+  `sk_live_...` is a **project** key authenticating callers of a public AI endpoint
+  (from `Authorization: Bearer` or `?api_key=`); `shyft_...` is a **personal** key
+  authenticating its owner on admin routes; `shyftent_...` is an **entity** key
+  authenticating as the workspace itself (path-restricted to `/entities/*`, cannot
+  mint/reveal keys). Key prefixes are set in `src/service.ts`.
+- **Public AI routes do their own project-key auth** — not Firebase, not `X-API-Key`.
+  The invoke path has **no `/invoke` suffix**: `POST /api/v1/ai/:entitySlug/:project/:endpoint`;
+  the endpoint name is the last segment, `/prompt` is the one reserved suffix.
+- **Provider credentials are per-entity**, resolved from the `llm_api_keys` row bound by
+  `endpoints.llm_key_id` (`src/credentials/llm-key-resolver.ts`), decrypted with
+  `ENCRYPTION_KEY`. Encrypt/decrypt via `src/lib/encryption.ts`.
+- **No build step for dev** — `bun run dev` runs TypeScript directly; `bun run build` is
+  only for the production Docker image.
+- **Six `@sudobility/*` deps** — version mismatches between them are the most common
+  source of type errors. After bumping any, run `bun run typecheck`.
+- `provider-sync.ts` rewrites `lm_studio` provider hosts to the caller's resolved public
+  IP; it imports `getConnInfo` from `hono/bun` (hence the test alias above). This is a
+  **leaf app** — nothing depends on it.
+
+Deep route/LLM-provider/structured-output/rate-limit behavior is implemented in the
+shared packages above; document and change it there, not in this README/CLAUDE.md.

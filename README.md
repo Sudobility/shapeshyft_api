@@ -63,12 +63,23 @@ Supports 10 LLM providers: OpenAI, Anthropic, Gemini, Groq, Mistral, xAI, DeepSe
 
 ```bash
 bun run dev          # Dev server with hot reload
-bun run test         # Unit tests (Vitest; never plain `bun test`)
+bun run test:unit    # Unit tests (Vitest; never plain `bun test`). No `test` script exists.
 TEST_DATABASE_URL=postgresql://localhost:5432/shapeshyft_test bun run test:db  # Database tests
 bun run typecheck    # TypeScript check
 bun run lint         # ESLint
 bun run verify       # Typecheck + lint + unit tests
 ```
+
+## Build & Deploy
+
+```bash
+bun run build        # Bundle to dist/ (bun build, target bun) -- production only
+bun run start:prod   # Run the built dist/index.js
+```
+
+The dev server defaults to port 3000; the Docker image (`Dockerfile`) exposes and
+health-checks port 8020, overridable via `PORT`. CI/CD (`.github/workflows`) builds
+the Docker image and deploys on pushes to `main`.
 
 ## Related Packages
 
