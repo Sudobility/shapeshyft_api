@@ -13,7 +13,7 @@
         "@sudobility/ratelimit_service": "^1.0.54",
         "@sudobility/shapeshyft_engine": "^1.0.19",
         "@sudobility/shapeshyft_service": "^1.0.26",
-        "@sudobility/shapeshyft_types": "^1.1.31",
+        "@sudobility/shapeshyft_types": "^1.1.33",
         "@sudobility/subscription_service": "^1.0.38",
         "@sudobility/types": "^1.11.2",
         "drizzle-orm": "~0.45.4",
@@ -303,7 +303,7 @@
 
     "@sudobility/shapeshyft_service": ["@sudobility/shapeshyft_service@1.0.26", "https://npm.pkg.github.com/download/@sudobility/shapeshyft_service/1.0.26/52b7ac840e789f9b028c2b78689e832a142475bc", { "dependencies": { "@hono/zod-validator": "~0.7.6", "@sudobility/shapeshyft_engine": "^1.0.19", "resend": "~6.28.0", "zod": "~3.25.76" }, "peerDependencies": { "@sudobility/auth_service": "^1.1.36", "@sudobility/entity_service": "^1.0.56", "@sudobility/ratelimit_service": "^1.0.54", "@sudobility/subscription_service": "^1.0.38", "@sudobility/types": "^1.11.2", "drizzle-orm": "^0.45.0", "firebase-admin": "^13.6.0", "hono": "^4.10.7", "postgres": "^3.4.7" } }, "sha512-AO2yqZkFagk7YM67jkDjflV+abvfv8xv/z6iIO/JS4aTml7PW9HFvvEQ53z+Qr4KL7UdyrOmLNlFfsEPE5gSSA=="],
 
-    "@sudobility/shapeshyft_types": ["@sudobility/shapeshyft_types@1.1.31", "https://npm.pkg.github.com/download/@sudobility/shapeshyft_types/1.1.31/83529d319ef82be6bac5a20b2bc1f3e2aeeb9a39", { "peerDependencies": { "@sudobility/shapeshyft_engine": "^1.0.19", "@sudobility/types": "^1.11.2" } }, "sha512-+HJQDcgS04gCIg+Vx6hDNPuoVQUb61j5j9UB5vpeOCaA8Dajfng8hGo++zoVYOc0AkVhulWQe3dZyVtMhzuxVA=="],
+    "@sudobility/shapeshyft_types": ["@sudobility/shapeshyft_types@1.1.33", "https://npm.pkg.github.com/download/@sudobility/shapeshyft_types/1.1.33/cdbdc231fef74b09c1e42969fcbdb26afde6a19a", { "peerDependencies": { "@sudobility/shapeshyft_engine": "^1.0.19", "@sudobility/types": "^1.11.2" } }, "sha512-oZiYjAVpiRK+wOZLbB/SalIoYvcuTEXqR3MruMcwJxw7u8fJkmff8YLgd9AI7JNLHV8G6oVbeiERb4zaGX9JeA=="],
 
     "@sudobility/subscription_service": ["@sudobility/subscription_service@1.0.38", "https://npm.pkg.github.com/download/@sudobility/subscription_service/1.0.38/ce2b9b1f0d79d658cc2f748c51777e5f62d400cc", {}, "sha512-/+H2flK3hGG2ZDKw2niO7maVmTJqieMul66mgRaBi3N7JFl0Glr4ncgrEDIGLyTHex8DEFF//Y6ZTHIPzntgrQ=="],
 

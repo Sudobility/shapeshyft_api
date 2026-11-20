@@ -19,6 +19,7 @@ import { readPeerAddress } from "./lib/peer-address";
 import { createLlmKeyCredentialResolver } from "./credentials/llm-key-resolver";
 import { endpointBinding } from "./schemas/endpoint-binding";
 import { createKeysRouter } from "./routes/keys";
+import { createSiteLlmKeysRouter } from "./routes/site-llm-keys";
 import providerSyncRouter from "./routes/provider-sync";
 import { createImageProvider } from "./image-provider";
 
@@ -61,6 +62,7 @@ export const service = createShapeshyftService({
  */
 export function mountShapeshyftRoutes(admin: Hono): void {
   admin.route("/entities/self/providers", providerSyncRouter);
+  admin.route("/site/llm-keys", createSiteLlmKeysRouter(service.ctx));
   admin.route("/entities/:entitySlug/keys", createKeysRouter(service.ctx));
 }
 

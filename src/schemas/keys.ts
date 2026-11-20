@@ -25,16 +25,16 @@ export const keyCreateSchema = z
   })
   .refine(
     data => {
-      // For API-based providers, api_key is required
-      if (data.provider !== "lm_studio") {
-        return !!data.api_key;
+      // Endpoint-based providers (lm_studio) still need an endpoint URL.
+      if (data.provider === "lm_studio") {
+        return !!data.endpoint_url;
       }
-      // For lm_studio, endpoint_url is required
-      return !!data.endpoint_url;
+      // api_key is optional for all other providers: a key saved without one
+      // falls back to the site-wide key for that provider at invocation time.
+      return true;
     },
     {
-      message:
-        "api_key is required for API providers, endpoint_url is required for lm_studio",
+      message: "endpoint_url is required for lm_studio",
     }
   );
 

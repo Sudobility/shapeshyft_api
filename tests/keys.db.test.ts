@@ -120,6 +120,22 @@ describe("Keys Routes", () => {
       expect(json.data.endpoint_url).toBe("http://localhost:8080/generate");
     });
 
+    it("should create an API-provider key without an api_key (site-wide fallback)", async () => {
+      const res = await createTestRequest(app, "POST", `/api/v1/entities/${entitySlug}/keys`, {
+        body: {
+          key_name: "OpenAI (use site-wide)",
+          provider: "openai",
+        },
+      });
+
+      expect(res.status).toBe(201);
+
+      const json = await res.json();
+      expect(json.success).toBe(true);
+      expect(json.data.provider).toBe("openai");
+      expect(json.data.has_api_key).toBe(false);
+    });
+
     it("should reject invalid provider", async () => {
       const res = await createTestRequest(app, "POST", `/api/v1/entities/${entitySlug}/keys`, {
         body: {

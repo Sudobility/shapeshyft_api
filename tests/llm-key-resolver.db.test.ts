@@ -9,10 +9,12 @@ import {
   noActiveProviderKey,
 } from "../src/credentials/llm-key-resolver";
 import {
+  cleanupSiteLlmKeys,
   cleanupTestUser,
   createTestEndpoint,
   createTestLlmKey,
   createTestProject,
+  createTestSiteLlmKey,
   createTestUserWithEntity,
 } from "./utils/test-db";
 import { testUser } from "./utils";
@@ -34,6 +36,7 @@ describe("LlmKeyCredentialResolver", () => {
 
   beforeEach(async () => {
     await cleanupTestUser(testUser.uid);
+    await cleanupSiteLlmKeys();
     const { entity } = await createTestUserWithEntity(testUser);
     entityId = entity.id;
     const { encrypted, iv } = encryption.encryptApiKey("sk-real");
@@ -195,6 +198,100 @@ describe("LlmKeyCredentialResolver", () => {
         provider: "openrouter",
       });
       expect(resolved.ok).toBe(false);
+    });
+  });
+
+  describe("resolve with site-wide fallback", () => {
+    async function addSiteKey(
+      provider: "openrouter" | "openai",
+      secret: string,
+      isActive = true
+    ) {
+      const { encrypted, iv } = encryption.encryptApiKey(secret);
+      return createTestSiteLlmKey({
+        key_name: `site-${secret}`,
+        provider,
+        encrypted_api_key: encrypted,
+        encryption_iv: iv,
+        is_active: isActive,
+      });
+    }
+
+    it("uses the entity's own key when it has one, ignoring the site key", async () => {
+      const endpoint = await endpointBoundToKey();
+      const { encrypted, iv } = encryption.encryptApiKey("sk-entity");
+      await createTestLlmKey(entityId, {
+        key_name: "entity-or",
+        provider: "openrouter",
+        encrypted_api_key: encrypted,
+        encryption_iv: iv,
+      });
+      await addSiteKey("openrouter", "sk-site");
+
+      const resolved = await resolver.resolve({
+        entityId,
+        endpoint,
+        provider: "openrouter",
+      });
+      expect(resolved.ok && resolved.apiKey).toBe("sk-entity");
+    });
+
+    it("falls back to the site-wide key when the entity key has no api key", async () => {
+      const endpoint = await endpointBoundToKey();
+      // Entity key saved with no api key (the new optional case).
+      await createTestLlmKey(entityId, {
+        key_name: "entity-or-empty",
+        provider: "openrouter",
+      });
+      await addSiteKey("openrouter", "sk-site");
+
+      const resolved = await resolver.resolve({
+        entityId,
+        endpoint,
+        provider: "openrouter",
+      });
+      expect(resolved.ok && resolved.apiKey).toBe("sk-site");
+    });
+
+    it("falls back on the no-override path when the bound key is empty", async () => {
+      // An endpoint bound to an entity key that carries no credential of its own.
+      const emptyKey = await createTestLlmKey(entityId, {
+        key_name: "entity-openai-empty",
+        provider: "openai",
+      });
+      const project = await createTestProject(entityId, {
+        project_name: "p2",
+        display_name: "P2",
+      });
+      const endpoint = await createTestEndpoint(project.uuid, emptyKey.uuid, {
+        endpoint_name: "e2",
+        display_name: "E2",
+      });
+      await addSiteKey("openai", "sk-site-openai");
+
+      const resolved = await resolver.resolve({
+        entityId,
+        // The test helper leaves endpoint.provider null; emulate the persisted value.
+        endpoint: { ...endpoint, provider: "openai" },
+      });
+      expect(resolved.ok && resolved.provider).toBe("openai");
+      expect(resolved.ok && resolved.apiKey).toBe("sk-site-openai");
+    });
+
+    it("errors when the entity key is empty and no site key exists", async () => {
+      const endpoint = await endpointBoundToKey();
+      await createTestLlmKey(entityId, {
+        key_name: "entity-or-empty",
+        provider: "openrouter",
+      });
+
+      expect(
+        await resolver.resolve({ entityId, endpoint, provider: "openrouter" })
+      ).toEqual({
+        ok: false,
+        status: 400,
+        message: noActiveProviderKey("openrouter"),
+      });
     });
   });
 });

@@ -49,7 +49,8 @@ export function createMockDecodedToken(
  */
 export function mockFirebaseAuthMiddleware(
   mockUser: MockFirebaseUser = testUser,
-  testUserId?: string
+  testUserId?: string,
+  siteAdmin = false
 ) {
   return async (c: Context, next: Next) => {
     const decodedToken = createMockDecodedToken(mockUser);
@@ -58,6 +59,8 @@ export function mockFirebaseAuthMiddleware(
     if (testUserId) {
       c.set("userId", testUserId);
     }
+    // Site-admin flag - normally derived from SITEADMIN_EMAILS by the real auth
+    c.set("siteAdmin", siteAdmin);
     await next();
   };
 }

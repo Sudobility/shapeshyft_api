@@ -12,6 +12,7 @@ import {
 import * as schema from "./schema";
 import { getRequiredEnv } from "../lib/env-helper";
 import { initLlmApiKeys } from "./llm-api-keys";
+import { initSiteLlmKeys } from "./site-llm-keys";
 
 const database = createLazyDatabase(
   () => getRequiredEnv("DATABASE_URL"),
@@ -31,6 +32,9 @@ export async function initDatabase() {
 
   // ShapeShyft's own: llm_api_keys, its FK from endpoints, provider backfill
   await initLlmApiKeys(client);
+
+  // Site-wide (platform) provider keys, managed by site admins
+  await initSiteLlmKeys(client);
 
   console.log("Database tables initialized");
 }

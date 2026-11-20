@@ -9,7 +9,11 @@ import { service, mountShapeshyftRoutes } from "../../src/service";
  * @param mockUser - Mock Firebase user for authentication
  * @param testUserId - Internal user UUID (from users table)
  */
-export function createTestApp(mockUser: MockFirebaseUser = testUser, testUserId?: string) {
+export function createTestApp(
+  mockUser: MockFirebaseUser = testUser,
+  testUserId?: string,
+  siteAdmin = false
+) {
   const app = new Hono();
 
   // Middleware
@@ -30,7 +34,7 @@ export function createTestApp(mockUser: MockFirebaseUser = testUser, testUserId?
   app.route(
     "/api/v1",
     service.buildRoutes({
-      authMiddleware: mockFirebaseAuthMiddleware(mockUser, testUserId),
+      authMiddleware: mockFirebaseAuthMiddleware(mockUser, testUserId, siteAdmin),
       mountAdmin: mountShapeshyftRoutes,
     })
   );

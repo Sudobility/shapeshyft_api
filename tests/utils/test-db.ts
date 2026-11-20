@@ -3,6 +3,7 @@ import {
   users,
   userSettings,
   llmApiKeys,
+  siteLlmKeys,
   projects,
   endpoints,
   usageAnalytics,
@@ -232,6 +233,42 @@ export async function createTestLlmKey(
       encrypted_api_key: data.encrypted_api_key ?? null,
       encryption_iv: data.encryption_iv ?? null,
       endpoint_url: data.endpoint_url ?? null,
+    })
+    .returning();
+
+  return rows[0]!;
+}
+
+/**
+ * Delete all site-wide LLM keys (they are not entity-scoped, so cleanupTestUser
+ * does not touch them). Call in beforeEach/afterAll of site-key tests.
+ */
+export async function cleanupSiteLlmKeys() {
+  await db.delete(siteLlmKeys);
+}
+
+/**
+ * Create a test site-wide LLM API key directly in the database
+ */
+export async function createTestSiteLlmKey(data: {
+  key_name: string;
+  provider: "openai" | "gemini" | "anthropic" | "lm_studio" | "deepseek" | "openrouter";
+  encrypted_api_key?: string;
+  encryption_iv?: string;
+  endpoint_url?: string;
+  is_active?: boolean;
+  created_by?: string;
+}) {
+  const rows = await db
+    .insert(siteLlmKeys)
+    .values({
+      key_name: data.key_name,
+      provider: data.provider,
+      encrypted_api_key: data.encrypted_api_key ?? null,
+      encryption_iv: data.encryption_iv ?? null,
+      endpoint_url: data.endpoint_url ?? null,
+      is_active: data.is_active ?? true,
+      created_by: data.created_by ?? null,
     })
     .returning();
 
