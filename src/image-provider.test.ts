@@ -327,3 +327,225 @@ describe("Stability AI image output", () => {
     expect(result.generatedMedia?.[0]?.data).toBe("Y29yZQ==");
   });
 });
+
+const audioRequest = (model: string, prompt = "Hello world") => ({
+  prompt,
+  outputSchema: { type: "object" as const },
+  model,
+  expectsMediaOutput: { audio: true },
+});
+
+const videoRequest = (model: string) => ({
+  prompt: "A neon city timelapse",
+  outputSchema: { type: "object" as const },
+  model,
+  expectsMediaOutput: { video: true },
+});
+
+describe("xAI image output", () => {
+  it("requests base64 from the OpenAI-compatible endpoint", async () => {
+    const fetchMock = vi.fn(async (url: string, init: RequestInit) => {
+      expect(url).toBe("https://api.x.ai/v1/images/generations");
+      const body = JSON.parse(String(init.body)) as { response_format: string };
+      expect(body.response_format).toBe("b64_json");
+      return new Response(
+        JSON.stringify({
+          data: [{ b64_json: "eA==", mime_type: "image/jpeg" }],
+        }),
+        { status: 200 }
+      );
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    const provider = createImageProvider("xai", { apiKey: "test" });
+    const result = await provider.generate(
+      imageRequest("grok-imagine-image-2.0")
+    );
+    expect(result.generatedMedia).toEqual([
+      { type: "image", mimeType: "image/jpeg", data: "eA==" },
+    ]);
+    expect(result.usage.billedCostCents).toBeCloseTo(4.0);
+  });
+});
+
+describe("fal.ai aggregator output", () => {
+  it("calls the sync fal.run path and decodes an inline data URI", async () => {
+    const fetchMock = vi.fn(async (url: string, init: RequestInit) => {
+      expect(url).toBe("https://fal.run/fal-ai/flux/dev");
+      expect((init.headers as Record<string, string>).Authorization).toBe(
+        "Key test"
+      );
+      expect(JSON.parse(String(init.body)).sync_mode).toBe(true);
+      return new Response(
+        JSON.stringify({ images: [{ url: "data:image/png;base64,ZmFs" }] }),
+        { status: 200 }
+      );
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    const provider = createImageProvider("fal", { apiKey: "test" });
+    const result = await provider.generate(imageRequest("fal-ai/flux/dev"));
+    expect(result.generatedMedia).toEqual([
+      { type: "image", mimeType: "image/png", data: "ZmFs" },
+    ]);
+    expect(result.usage.billedCostCents).toBeCloseTo(2.5);
+  });
+});
+
+describe("Luma Photon output", () => {
+  it("uses sync mode and re-hosts assets.image", async () => {
+    const fetchMock = vi.fn(async (url: string, init?: RequestInit) => {
+      if (url.endsWith("/generations/image")) {
+        expect(JSON.parse(String(init?.body)).sync).toBe(true);
+        return new Response(
+          JSON.stringify({
+            state: "completed",
+            assets: { image: "https://cdn.luma.ai/x.jpg" },
+          }),
+          { status: 200 }
+        );
+      }
+      return new Response(Buffer.from("img"), {
+        status: 200,
+        headers: { "content-type": "image/jpeg" },
+      });
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    const provider = createImageProvider("luma", { apiKey: "test" });
+    const result = await provider.generate(imageRequest("photon-1"));
+    expect(result.generatedMedia?.[0]?.mimeType).toBe("image/jpeg");
+    expect(result.usage.billedCostCents).toBeCloseTo(1.5);
+  });
+});
+
+describe("Alibaba Qwen-Image output", () => {
+  it("reads the image from the multimodal-generation response", async () => {
+    const fetchMock = vi.fn(async (url: string) => {
+      if (url.includes("aliyuncs.com"))
+        return new Response(
+          JSON.stringify({
+            output: {
+              choices: [
+                { message: { content: [{ image: "https://cdn.qwen/x.png" }] } },
+              ],
+            },
+          }),
+          { status: 200 }
+        );
+      return new Response(Buffer.from("q"), {
+        status: 200,
+        headers: { "content-type": "image/png" },
+      });
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    const provider = createImageProvider("alibaba", { apiKey: "test" });
+    const result = await provider.generate(imageRequest("qwen-image-2.0"));
+    expect(result.generatedMedia?.[0]?.data).toBe(
+      Buffer.from("q").toString("base64")
+    );
+    expect(result.usage.billedCostCents).toBeCloseTo(2.5);
+  });
+});
+
+describe("Runway Gen-4 output", () => {
+  it("sends the version header, polls, and re-hosts the output", async () => {
+    const fetchMock = vi.fn(async (url: string, init?: RequestInit) => {
+      if (url.endsWith("/text_to_image")) {
+        expect(
+          (init?.headers as Record<string, string>)["X-Runway-Version"]
+        ).toBe("2024-11-06");
+        return new Response(JSON.stringify({ id: "task1" }), { status: 200 });
+      }
+      if (url.endsWith("/tasks/task1"))
+        return new Response(
+          JSON.stringify({ status: "SUCCEEDED", output: ["https://rw/x.png"] }),
+          { status: 200 }
+        );
+      return new Response(Buffer.from("rw"), {
+        status: 200,
+        headers: { "content-type": "image/png" },
+      });
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    const provider = createImageProvider("runway", { apiKey: "test" });
+    const result = await provider.generate(imageRequest("gen4_image"));
+    expect(result.generatedMedia?.[0]?.data).toBe(
+      Buffer.from("rw").toString("base64")
+    );
+    expect(result.usage.billedCostCents).toBeCloseTo(8.0);
+  });
+
+  it("rejects gen4_image_turbo without a reference image", async () => {
+    const provider = createImageProvider("runway", { apiKey: "test" });
+    await expect(
+      provider.generate(imageRequest("gen4_image_turbo"))
+    ).rejects.toThrow(/reference image/);
+  });
+});
+
+describe("ElevenLabs audio output", () => {
+  it("posts text with xi-api-key, returns audio bytes, bills per character", async () => {
+    const fetchMock = vi.fn(async (url: string, init: RequestInit) => {
+      expect(url).toBe(
+        "https://api.elevenlabs.io/v1/text-to-speech/JBFqnCBsd6RMkjVDRZzb"
+      );
+      expect((init.headers as Record<string, string>)["xi-api-key"]).toBe(
+        "test"
+      );
+      return new Response(Buffer.from("mp3"), {
+        status: 200,
+        headers: { "content-type": "audio/mpeg" },
+      });
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    const provider = createImageProvider("elevenlabs", { apiKey: "test" });
+    const result = await provider.generate(
+      audioRequest("eleven_multilingual_v2", "12345") // 5 chars
+    );
+    expect(result.generatedMedia).toEqual([
+      {
+        type: "audio",
+        mimeType: "audio/mpeg",
+        data: Buffer.from("mp3").toString("base64"),
+      },
+    ]);
+    // 5 chars at $0.08/1k = 0.04 cents.
+    expect(result.usage.billedCostCents).toBeCloseTo(0.04);
+  });
+});
+
+describe("Kling video output", () => {
+  it("creates with model in the path, polls /tasks, re-hosts the video", async () => {
+    const fetchMock = vi.fn(async (url: string) => {
+      if (url.endsWith("/text-to-video/kling-2.6"))
+        return new Response(JSON.stringify({ data: { id: "k1" } }), {
+          status: 200,
+        });
+      if (url.includes("/tasks?task_ids="))
+        return new Response(
+          JSON.stringify({
+            data: [
+              {
+                status: "succeeded",
+                outputs: [{ type: "video", url: "https://kl/v.mp4" }],
+              },
+            ],
+          }),
+          { status: 200 }
+        );
+      return new Response(Buffer.from("vid"), {
+        status: 200,
+        headers: { "content-type": "video/mp4" },
+      });
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    const provider = createImageProvider("kling", { apiKey: "test" });
+    const result = await provider.generate(videoRequest("kling-2.6"));
+    expect(result.generatedMedia).toEqual([
+      {
+        type: "video",
+        mimeType: "video/mp4",
+        data: Buffer.from("vid").toString("base64"),
+      },
+    ]);
+    expect(result.usage.billedCostCents).toBeGreaterThan(0);
+  });
+});
