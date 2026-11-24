@@ -141,3 +141,189 @@ describe("OpenAI image output", () => {
     expect(typeof provider.generate).toBe("function");
   });
 });
+
+const imageRequest = (model: string, extra: Record<string, unknown> = {}) => ({
+  prompt: "A neon city",
+  outputSchema: { type: "object" as const },
+  model,
+  expectsMediaOutput: { image: true },
+  ...extra,
+});
+
+describe("ByteDance Seedream image output", () => {
+  it("posts to the Ark Images API and maps base64 output with per-image cost", async () => {
+    const fetchMock = vi.fn(async (url: string, init: RequestInit) => {
+      expect(url).toBe(
+        "https://ark.ap-southeast.bytepluses.com/api/v3/images/generations"
+      );
+      expect((init.headers as Record<string, string>).Authorization).toBe(
+        "Bearer test"
+      );
+      const body = JSON.parse(String(init.body)) as {
+        model: string;
+        response_format: string;
+      };
+      expect(body.model).toBe("seedream-4-0-250828");
+      expect(body.response_format).toBe("b64_json");
+      return new Response(JSON.stringify({ data: [{ b64_json: "cG5n" }] }), {
+        status: 200,
+      });
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    const provider = createImageProvider("bytedance", { apiKey: "test" });
+    const result = await provider.generate(imageRequest("seedream-4-0-250828"));
+    expect(result.generatedMedia).toEqual([
+      { type: "image", mimeType: "image/png", data: "cG5n" },
+    ]);
+    // $0.03/image = 3.0 cents, billed authoritatively.
+    expect(result.usage.billedCostCents).toBeCloseTo(3.0);
+  });
+});
+
+describe("Black Forest Labs FLUX image output", () => {
+  it("submits, polls until Ready, then re-hosts the result image", async () => {
+    const fetchMock = vi.fn(async (url: string, init?: RequestInit) => {
+      if (url === "https://api.bfl.ai/v1/flux-pro-1.1") {
+        expect((init?.headers as Record<string, string>)["x-key"]).toBe("test");
+        return new Response(
+          JSON.stringify({ id: "abc", polling_url: "https://poll.bfl.ai/abc" }),
+          { status: 200 }
+        );
+      }
+      if (url === "https://poll.bfl.ai/abc") {
+        return new Response(
+          JSON.stringify({
+            status: "Ready",
+            result: { sample: "https://cdn.bfl.ai/abc.png" },
+          }),
+          { status: 200 }
+        );
+      }
+      // Image download → raw bytes with a content type.
+      return new Response(Buffer.from("png"), {
+        status: 200,
+        headers: { "content-type": "image/png" },
+      });
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    const provider = createImageProvider("bfl", { apiKey: "test" });
+    const result = await provider.generate(imageRequest("flux-pro-1.1"));
+    expect(result.generatedMedia).toEqual([
+      {
+        type: "image",
+        mimeType: "image/png",
+        data: Buffer.from("png").toString("base64"),
+      },
+    ]);
+    expect(result.usage.billedCostCents).toBeCloseTo(4.0);
+  });
+
+  it("throws on a terminal non-success status", async () => {
+    const fetchMock = vi.fn(async (url: string) =>
+      url.includes("poll")
+        ? new Response(JSON.stringify({ status: "Content Moderated" }), {
+            status: 200,
+          })
+        : new Response(
+            JSON.stringify({ id: "x", polling_url: "https://poll.bfl.ai/x" }),
+            { status: 200 }
+          )
+    );
+    vi.stubGlobal("fetch", fetchMock);
+    const provider = createImageProvider("bfl", { apiKey: "test" });
+    await expect(
+      provider.generate(imageRequest("flux-pro-1.1"))
+    ).rejects.toThrow(/Content Moderated/);
+  });
+});
+
+describe("Ideogram image output", () => {
+  it("sends multipart with rendering_speed from the model id and re-hosts the url", async () => {
+    const fetchMock = vi.fn(async (url: string, init: RequestInit) => {
+      if (url === "https://api.ideogram.ai/v2/image/generate/ideogram-3") {
+        expect((init.headers as Record<string, string>)["Api-Key"]).toBe(
+          "test"
+        );
+        expect(init.body).toBeInstanceOf(FormData);
+        expect((init.body as FormData).get("rendering_speed")).toBe("TURBO");
+        return new Response(
+          JSON.stringify({ data: [{ url: "https://cdn.ideogram.ai/x.png" }] }),
+          { status: 200 }
+        );
+      }
+      return new Response(Buffer.from("png"), {
+        status: 200,
+        headers: { "content-type": "image/png" },
+      });
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    const provider = createImageProvider("ideogram", { apiKey: "test" });
+    const result = await provider.generate(imageRequest("ideogram-3-turbo"));
+    expect(result.generatedMedia?.[0]?.data).toBe(
+      Buffer.from("png").toString("base64")
+    );
+    expect(result.usage.billedCostCents).toBeCloseTo(3.0);
+  });
+});
+
+describe("Recraft image output", () => {
+  it("requests base64 output from the OpenAI-style endpoint", async () => {
+    const fetchMock = vi.fn(async (url: string, init: RequestInit) => {
+      expect(url).toBe("https://external.api.recraft.ai/v1/images/generations");
+      const body = JSON.parse(String(init.body)) as { model: string };
+      expect(body.model).toBe("recraftv3");
+      return new Response(JSON.stringify({ data: [{ b64_json: "cmM=" }] }), {
+        status: 200,
+      });
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    const provider = createImageProvider("recraft", { apiKey: "test" });
+    const result = await provider.generate(imageRequest("recraftv3"));
+    expect(result.generatedMedia).toEqual([
+      { type: "image", mimeType: "image/png", data: "cmM=" },
+    ]);
+    expect(result.usage.billedCostCents).toBeCloseTo(4.0);
+  });
+});
+
+describe("Stability AI image output", () => {
+  it("routes sd3.5 ids to the /sd3 endpoint with a model field and reads base64", async () => {
+    const fetchMock = vi.fn(async (url: string, init: RequestInit) => {
+      expect(url).toBe(
+        "https://api.stability.ai/v2beta/stable-image/generate/sd3"
+      );
+      expect((init.headers as Record<string, string>).Accept).toBe(
+        "application/json"
+      );
+      expect((init.body as FormData).get("model")).toBe("sd3.5-large");
+      return new Response(
+        JSON.stringify({ image: "c2Q=", finish_reason: "SUCCESS" }),
+        { status: 200 }
+      );
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    const provider = createImageProvider("stability", { apiKey: "test" });
+    const result = await provider.generate(imageRequest("sd3.5-large"));
+    expect(result.generatedMedia).toEqual([
+      { type: "image", mimeType: "image/png", data: "c2Q=" },
+    ]);
+    expect(result.usage.billedCostCents).toBeCloseTo(6.5);
+  });
+
+  it("routes core to its own endpoint without a model field", async () => {
+    const fetchMock = vi.fn(async (url: string, init: RequestInit) => {
+      expect(url).toBe(
+        "https://api.stability.ai/v2beta/stable-image/generate/core"
+      );
+      expect((init.body as FormData).get("model")).toBeNull();
+      return new Response(
+        JSON.stringify({ image: "Y29yZQ==", finish_reason: "SUCCESS" }),
+        { status: 200 }
+      );
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    const provider = createImageProvider("stability", { apiKey: "test" });
+    const result = await provider.generate(imageRequest("stable-image-core"));
+    expect(result.generatedMedia?.[0]?.data).toBe("Y29yZQ==");
+  });
+});
